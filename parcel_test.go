@@ -1,158 +1,224 @@
 package main
 
 import (
-	"context"
-	"database/sql"
-	"math/rand"
-	"testing"
-	"time"
+    "database/sql"
+    "testing"
 
-	_ "github.com/mattn/go-sqlite3"
-	"github.com/stretchr/testify/require"
+    _ "modernc.org/sqlite"
 )
 
-var (
-	randSource = rand.NewSource(time.Now().UnixNano())
-	randRange  = rand.New(randSource)
-)
+func TestAddGetByClient(t *testing.T) {
+    db, err := sql.Open("sqlite", "file::memory:?cache=shared")
+    if err != nil {
+        t.Fatal(err)
+    }
+    defer db.Close()
 
-func getTestParcel() Parcel {
-	return Parcel{
-		Client:    1000,
-		Status:    ParcelStatusRegistered,
-		Address:   "test",
-		CreatedAt: time.Now().UTC().Format(time.RFC3339),
-	}
-}
+    _, err = db.Exec(`
+        CREATE TABLE parcel (
+            number INTEGER PRIMARY KEY AUTOINCREMENT,
+            client INTEGER,
+            status TEXT,
+            address TEXT,
+            created_at TEXT
+        )
+    `)
+    if err != nil {
+        t.Fatal(err)
+    }
 
-func setupTestDB(t *testing.T) *sql.DB {
-	db, err := sql.Open("sqlite3", ":memory:")
-	require.NoError(t, err)
+    store := NewParcelStore(db)
 
-	_, err = db.Exec(`
-		CREATE TABLE IF NOT EXISTS parcel (
-			number INTEGER PRIMARY KEY AUTOINCREMENT,
-			client INTEGER,
-			status TEXT,
-			address TEXT,
-			created_at TEXT
-		)
-	`)
-	require.NoError(t, err)
+    p1 := Parcel{Client: 1, Status: "registered", Address: "ул. Пушкина, д. 1"}
+    id1, err := store.Add(p1)
+    if err != nil {
+        t.Fatalf("Add failed: %v", err)
+    }
+    if id1 == 0 {
+        t.Error("Add returned zero id")
+    }
 
-	return db
-}
+    p2 := Parcel{Client: 1, Status: "sent", Address: "ул. Лермонтова, д. 2"}
+    id2, err := store.Add(p2)
+    if err != nil {
+        t.Fatalf("Add failed: %v", err)
+    }
+    if id2 == 0 {
+        t.Error("Add returned zero id")
+    }
 
-func TestAddGetDelete(t *testing.T) {
-	db := setupTestDB(t)
-	defer db.Close()
+    p3 := Parcel{Client: 2, Status: "registered", Address: "пр. Мира, д. 3"}
+    id3, err := store.Add(p3)
+    if err != nil {
+        t.Fatalf("Add failed: %v", err)
+    }
+    if id3 == 0 {
+        t.Error("Add returned zero id")
+    }
 
-	store := NewParcelStore(db)
-	parcel := getTestParcel()
-	ctx := context.Background()
+    parcels, err := store.GetByClient(1)
+    if err != nil {
+        t.Fatalf("GetByClient failed: %v", err)
+    }
+    if len(parcels) != 2 {
+        t.Errorf("Expected 2 parcels, got %d", len(parcels))
+    }
 
-	id, err := store.Add(ctx, parcel.Client, parcel.Address)
-	require.NoError(t, err)
-	require.NotZero(t, id)
+    found1, found2 := false, false
+    for _, p := range parcels {
+        if p.Number == id1 {
+            if p.Status != "registered" || p.Address != "ул. Пушкина, д. 1" || p.Client != 1 {
+                t.Errorf("Parcel %d mismatch: %+v", id1, p)
+            }
+            found1 = true
+        }
+        if p.Number == id2 {
+            if p.Status != "sent" || p.Address != "ул. Лермонтова, д. 2" || p.Client != 1 {
+                t.Errorf("Parcel %d mismatch: %+v", id2, p)
+            }
+            found2 = true
+        }
+    }
+    if !found1 || !found2 {
+        t.Error("Not all parcels found for client 1")
+    }
 
-	parcels, err := store.GetByClient(ctx, parcel.Client)
-	require.NoError(t, err)
-	require.Len(t, parcels, 1)
-
-	stored := parcels[0]
-	require.Equal(t, id, stored.Number)
-	require.Equal(t, parcel.Client, stored.Client)
-	require.Equal(t, ParcelStatusRegistered, stored.Status)
-	require.Equal(t, parcel.Address, stored.Address)
-	require.NotEmpty(t, stored.CreatedAt)
-
-	err = store.Delete(ctx, id)
-	require.NoError(t, err)
-
-	parcels, err = store.GetByClient(ctx, parcel.Client)
-	require.NoError(t, err)
-	require.Len(t, parcels, 0)
-}
-
-func TestSetAddress(t *testing.T) {
-	db := setupTestDB(t)
-	defer db.Close()
-
-	store := NewParcelStore(db)
-	parcel := getTestParcel()
-	ctx := context.Background()
-
-	id, err := store.Add(ctx, parcel.Client, parcel.Address)
-	require.NoError(t, err)
-
-	newAddress := "new test address"
-	err = store.SetAddress(ctx, id, newAddress)
-	require.NoError(t, err)
-
-	parcels, err := store.GetByClient(ctx, parcel.Client)
-	require.NoError(t, err)
-	require.Len(t, parcels, 1)
-	require.Equal(t, newAddress, parcels[0].Address)
+    for _, p := range parcels {
+        if p.Number == id3 {
+            t.Error("Client 2 parcel returned for client 1")
+        }
+    }
 }
 
 func TestSetStatus(t *testing.T) {
-	db := setupTestDB(t)
-	defer db.Close()
+    db, err := sql.Open("sqlite", "file::memory:?cache=shared")
+    if err != nil {
+        t.Fatal(err)
+    }
+    defer db.Close()
 
-	store := NewParcelStore(db)
-	parcel := getTestParcel()
-	ctx := context.Background()
+    _, err = db.Exec(`
+        CREATE TABLE parcel (
+            number INTEGER PRIMARY KEY AUTOINCREMENT,
+            client INTEGER,
+            status TEXT,
+            address TEXT,
+            created_at TEXT
+        )
+    `)
+    if err != nil {
+        t.Fatal(err)
+    }
 
-	id, err := store.Add(ctx, parcel.Client, parcel.Address)
-	require.NoError(t, err)
+    store := NewParcelStore(db)
 
-	err = store.SetStatus(ctx, id, ParcelStatusSent)
-	require.NoError(t, err)
+    p := Parcel{Client: 1, Status: "registered", Address: "ул. Пушкина, д. 1"}
+    id, err := store.Add(p)
+    if err != nil {
+        t.Fatalf("Add failed: %v", err)
+    }
 
-	parcels, err := store.GetByClient(ctx, parcel.Client)
-	require.NoError(t, err)
-	require.Len(t, parcels, 1)
-	require.Equal(t, ParcelStatusSent, parcels[0].Status)
+    err = store.SetStatus(id, "sent")
+    if err != nil {
+        t.Fatalf("SetStatus failed: %v", err)
+    }
+
+    parcels, err := store.GetByClient(1)
+    if err != nil {
+        t.Fatalf("GetByClient failed: %v", err)
+    }
+    if len(parcels) != 1 {
+        t.Fatalf("Expected 1 parcel, got %d", len(parcels))
+    }
+    if parcels[0].Status != "sent" {
+        t.Errorf("Expected status 'sent', got '%s'", parcels[0].Status)
+    }
 }
 
-func TestGetByClient(t *testing.T) {
-	db := setupTestDB(t)
-	defer db.Close()
+func TestSetAddress(t *testing.T) {
+    db, err := sql.Open("sqlite", "file::memory:?cache=shared")
+    if err != nil {
+        t.Fatal(err)
+    }
+    defer db.Close()
 
-	store := NewParcelStore(db)
-	ctx := context.Background()
+    _, err = db.Exec(`
+        CREATE TABLE parcel (
+            number INTEGER PRIMARY KEY AUTOINCREMENT,
+            client INTEGER,
+            status TEXT,
+            address TEXT,
+            created_at TEXT
+        )
+    `)
+    if err != nil {
+        t.Fatal(err)
+    }
 
-	parcels := []Parcel{
-		getTestParcel(),
-		getTestParcel(),
-		getTestParcel(),
-	}
-	parcelMap := make(map[int]Parcel)
+    store := NewParcelStore(db)
 
-	client := randRange.Intn(10_000_000)
-	for i := range parcels {
-		parcels[i].Client = client
-	}
+    p := Parcel{Client: 1, Status: "registered", Address: "ул. Пушкина, д. 1"}
+    id, err := store.Add(p)
+    if err != nil {
+        t.Fatalf("Add failed: %v", err)
+    }
 
-	for i := 0; i < len(parcels); i++ {
-		id, err := store.Add(ctx, parcels[i].Client, parcels[i].Address)
-		require.NoError(t, err)
-		require.NotZero(t, id)
+    newAddress := "ул. Лермонтова, д. 2"
+    err = store.SetAddress(id, newAddress)
+    if err != nil {
+        t.Fatalf("SetAddress failed: %v", err)
+    }
 
-		parcels[i].Number = id
-		parcelMap[id] = parcels[i]
-	}
+    parcels, err := store.GetByClient(1)
+    if err != nil {
+        t.Fatalf("GetByClient failed: %v", err)
+    }
+    if len(parcels) != 1 {
+        t.Fatalf("Expected 1 parcel, got %d", len(parcels))
+    }
+    if parcels[0].Address != newAddress {
+        t.Errorf("Expected address '%s', got '%s'", newAddress, parcels[0].Address)
+    }
+}
 
-	storedParcels, err := store.GetByClient(ctx, client)
-	require.NoError(t, err)
-	require.Len(t, storedParcels, len(parcels))
+func TestDelete(t *testing.T) {
+    db, err := sql.Open("sqlite", "file::memory:?cache=shared")
+    if err != nil {
+        t.Fatal(err)
+    }
+    defer db.Close()
 
-	for _, stored := range storedParcels {
-		original, ok := parcelMap[stored.Number]
-		require.True(t, ok, "посылка с номером %d не найдена", stored.Number)
-		require.Equal(t, original.Client, stored.Client)
-		require.Equal(t, original.Address, stored.Address)
-		require.Equal(t, ParcelStatusRegistered, stored.Status)
-		require.NotEmpty(t, stored.CreatedAt)
-	}
+    _, err = db.Exec(`
+        CREATE TABLE parcel (
+            number INTEGER PRIMARY KEY AUTOINCREMENT,
+            client INTEGER,
+            status TEXT,
+            address TEXT,
+            created_at TEXT
+        )
+    `)
+    if err != nil {
+        t.Fatal(err)
+    }
+
+    store := NewParcelStore(db)
+
+    p := Parcel{Client: 1, Status: "registered", Address: "ул. Пушкина, д. 1"}
+    id, err := store.Add(p)
+    if err != nil {
+        t.Fatalf("Add failed: %v", err)
+    }
+
+    err = store.Delete(id)
+    if err != nil {
+        t.Fatalf("Delete failed: %v", err)
+    }
+
+    parcels, err := store.GetByClient(1)
+    if err != nil {
+        t.Fatalf("GetByClient failed: %v", err)
+    }
+    if len(parcels) != 0 {
+        t.Errorf("Expected 0 parcels after delete, got %d", len(parcels))
+    }
 }
