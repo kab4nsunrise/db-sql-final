@@ -2,120 +2,208 @@ package main
 
 import (
 	"database/sql"
-	"math/rand"
 	"testing"
-	"time"
 
-	"github.com/stretchr/testify/require"
+	_ "modernc.org/sqlite"
 )
 
-var (
-	// randSource источник псевдо случайных чисел.
-	// Для повышения уникальности в качестве seed
-	// используется текущее время в unix формате (в виде числа)
-	randSource = rand.NewSource(time.Now().UnixNano())
-	// randRange использует randSource для генерации случайных чисел
-	randRange = rand.New(randSource)
-)
-
-// getTestParcel возвращает тестовую посылку
-func getTestParcel() Parcel {
-	return Parcel{
-		Client:    1000,
-		Status:    ParcelStatusRegistered,
-		Address:   "test",
-		CreatedAt: time.Now().UTC().Format(time.RFC3339),
+func TestAddGetByClient(t *testing.T) {
+	db, err := sql.Open("sqlite", "file::memory:?cache=shared")
+	if err != nil {
+		t.Fatal(err)
 	}
-}
+	defer db.Close()
 
-// TestAddGetDelete проверяет добавление, получение и удаление посылки
-func TestAddGetDelete(t *testing.T) {
-	// prepare
-	db, err := // настройте подключение к БД
+	_, err = db.Exec(`
+		CREATE TABLE parcel (
+			number INTEGER PRIMARY KEY AUTOINCREMENT,
+			client INTEGER,
+			status TEXT,
+			address TEXT,
+			created_at TEXT
+		)
+	`)
+	if err != nil {
+		t.Fatal(err)
+	}
+
 	store := NewParcelStore(db)
-	parcel := getTestParcel()
 
-	// add
-	// добавьте новую посылку в БД, убедитесь в отсутствии ошибки и наличии идентификатора
+	p1 := Parcel{Client: 1, Status: "registered", Address: "addr1", CreatedAt: "now"}
+	id1, err := store.Add(p1)
+	if err != nil || id1 == 0 {
+		t.Fatalf("Add failed: %v, id=%d", err, id1)
+	}
 
-	// get
-	// получите только что добавленную посылку, убедитесь в отсутствии ошибки
-	// проверьте, что значения всех полей в полученном объекте совпадают со значениями полей в переменной parcel
+	p2 := Parcel{Client: 1, Status: "sent", Address: "addr2", CreatedAt: "now"}
+	id2, err := store.Add(p2)
+	if err != nil || id2 == 0 {
+		t.Fatalf("Add failed: %v, id=%d", err, id2)
+	}
 
-	// delete
-	// удалите добавленную посылку, убедитесь в отсутствии ошибки
-	// проверьте, что посылку больше нельзя получить из БД
+	p3 := Parcel{Client: 2, Status: "registered", Address: "addr3", CreatedAt: "now"}
+	id3, err := store.Add(p3)
+	if err != nil || id3 == 0 {
+		t.Fatalf("Add failed: %v, id=%d", err, id3)
+	}
+
+	parcels, err := store.GetByClient(1)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(parcels) != 2 {
+		t.Errorf("Expected 2 parcels, got %d", len(parcels))
+	}
+
+	found1, found2 := false, false
+	for _, p := range parcels {
+		if p.Number == id1 {
+			if p.Address != "addr1" || p.Status != "registered" {
+				t.Errorf("Parcel %d mismatch: %+v", id1, p)
+			}
+			found1 = true
+		}
+		if p.Number == id2 {
+			if p.Address != "addr2" || p.Status != "sent" {
+				t.Errorf("Parcel %d mismatch: %+v", id2, p)
+			}
+			found2 = true
+		}
+	}
+	if !found1 || !found2 {
+		t.Error("Not all parcels found for client 1")
+	}
+
+	for _, p := range parcels {
+		if p.Number == id3 {
+			t.Error("Client 2 parcel returned for client 1")
+		}
+	}
 }
 
-// TestSetAddress проверяет обновление адреса
-func TestSetAddress(t *testing.T) {
-	// prepare
-	db, err := // настройте подключение к БД
-
-	// add
-	// добавьте новую посылку в БД, убедитесь в отсутствии ошибки и наличии идентификатора
-
-	// set address
-	// обновите адрес, убедитесь в отсутствии ошибки
-	newAddress := "new test address"
-
-	// check
-	// получите добавленную посылку и убедитесь, что адрес обновился
-}
-
-// TestSetStatus проверяет обновление статуса
 func TestSetStatus(t *testing.T) {
-	// prepare
-	db, err := // настройте подключение к БД
+	db, err := sql.Open("sqlite", "file::memory:?cache=shared")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer db.Close()
 
-	// add
-	// добавьте новую посылку в БД, убедитесь в отсутствии ошибки и наличии идентификатора
+	_, err = db.Exec(`
+		CREATE TABLE parcel (
+			number INTEGER PRIMARY KEY AUTOINCREMENT,
+			client INTEGER,
+			status TEXT,
+			address TEXT,
+			created_at TEXT
+		)
+	`)
+	if err != nil {
+		t.Fatal(err)
+	}
 
-	// set status
-	// обновите статус, убедитесь в отсутствии ошибки
+	store := NewParcelStore(db)
 
-	// check
-	// получите добавленную посылку и убедитесь, что статус обновился
+	p := Parcel{Client: 1, Status: "registered", Address: "addr", CreatedAt: "now"}
+	id, err := store.Add(p)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	err = store.SetStatus(id, "sent")
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	parcels, err := store.GetByClient(1)
+	if err != nil || len(parcels) != 1 {
+		t.Fatalf("GetByClient failed: %v, len=%d", err, len(parcels))
+	}
+	if parcels[0].Status != "sent" {
+		t.Errorf("Expected status 'sent', got '%s'", parcels[0].Status)
+	}
 }
 
-// TestGetByClient проверяет получение посылок по идентификатору клиента
-func TestGetByClient(t *testing.T) {
-	// prepare
-	db, err := // настройте подключение к БД
-
-	parcels := []Parcel{
-		getTestParcel(),
-		getTestParcel(),
-		getTestParcel(),
+func TestSetAddress(t *testing.T) {
+	db, err := sql.Open("sqlite", "file::memory:?cache=shared")
+	if err != nil {
+		t.Fatal(err)
 	}
-	parcelMap := map[int]Parcel{}
+	defer db.Close()
 
-	// задаём всем посылкам один и тот же идентификатор клиента
-	client := randRange.Intn(10_000_000)
-	parcels[0].Client = client
-	parcels[1].Client = client
-	parcels[2].Client = client
-
-	// add
-	for i := 0; i < len(parcels); i++ {
-		id, err := // добавьте новую посылку в БД, убедитесь в отсутствии ошибки и наличии идентификатора
-
-		// обновляем идентификатор добавленной у посылки
-		parcels[i].Number = id
-
-		// сохраняем добавленную посылку в структуру map, чтобы её можно было легко достать по идентификатору посылки
-		parcelMap[id] = parcels[i]
+	_, err = db.Exec(`
+		CREATE TABLE parcel (
+			number INTEGER PRIMARY KEY AUTOINCREMENT,
+			client INTEGER,
+			status TEXT,
+			address TEXT,
+			created_at TEXT
+		)
+	`)
+	if err != nil {
+		t.Fatal(err)
 	}
 
-	// get by client
-	storedParcels, err := // получите список посылок по идентификатору клиента, сохранённого в переменной client
-	// убедитесь в отсутствии ошибки
-	// убедитесь, что количество полученных посылок совпадает с количеством добавленных
+	store := NewParcelStore(db)
 
-	// check
-	for _, parcel := range storedParcels {
-		// в parcelMap лежат добавленные посылки, ключ - идентификатор посылки, значение - сама посылка
-		// убедитесь, что все посылки из storedParcels есть в parcelMap
-		// убедитесь, что значения полей полученных посылок заполнены верно
+	p := Parcel{Client: 1, Status: "registered", Address: "old", CreatedAt: "now"}
+	id, err := store.Add(p)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	newAddr := "new"
+	err = store.SetAddress(id, newAddr)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	parcels, err := store.GetByClient(1)
+	if err != nil || len(parcels) != 1 {
+		t.Fatalf("GetByClient failed: %v, len=%d", err, len(parcels))
+	}
+	if parcels[0].Address != newAddr {
+		t.Errorf("Expected address '%s', got '%s'", newAddr, parcels[0].Address)
+	}
+}
+
+func TestDelete(t *testing.T) {
+	db, err := sql.Open("sqlite", "file::memory:?cache=shared")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer db.Close()
+
+	_, err = db.Exec(`
+		CREATE TABLE parcel (
+			number INTEGER PRIMARY KEY AUTOINCREMENT,
+			client INTEGER,
+			status TEXT,
+			address TEXT,
+			created_at TEXT
+		)
+	`)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	store := NewParcelStore(db)
+
+	p := Parcel{Client: 1, Status: "registered", Address: "addr", CreatedAt: "now"}
+	id, err := store.Add(p)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	err = store.Delete(id)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	parcels, err := store.GetByClient(1)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(parcels) != 0 {
+		t.Errorf("Expected 0 parcels after delete, got %d", len(parcels))
 	}
 }
